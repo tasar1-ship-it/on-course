@@ -1,0 +1,22 @@
+{
+  "rules": {
+    "oncourse": {
+      "$key": {
+        ".read": "auth != null && $key.length >= 20",
+        ".write": "auth != null && $key.length >= 20",
+        "tasks": {
+          "$id": {
+            ".validate": "newData.hasChildren(['title', 'cat']) && newData.child('title').isString() && newData.child('title').val().length <= 200"
+          }
+        },
+        "done": {
+          "$id": {
+            "$day": {
+              ".validate": "newData.val() === true && $day.matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)"
+            }
+          }
+        }
+      }
+    }
+  }
+}

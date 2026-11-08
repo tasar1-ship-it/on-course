@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- On Course, version 0.1 (8 November 2026): first draft. -->
+<!-- On Course, version 0.2 (8 November 2026): round 1, safe storage and sync between devices through Firebase. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-version" content="0.1">
+<meta name="app-version" content="0.2">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}[hidden]{display:none!important}</style>
 <title>On Course</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -14,17 +14,17 @@
 /* Layout: sticky header with week navigation; Day view = progress panel + task list (side by side on iPad, stacked on iPhone); Week view = grid of day cards. */
 :root{
   --bg:#EDF1F4; --surface:#FFFFFF; --ink:#102131; --muted:#5A6B7B; --line:#D7DFE6; --track:#DCE3E9;
-  --school:#3554D1; --sailing:#0A8585; --other:#C9721C;
+  --school:#3554D1; --sailing:#0A8585; --other:#C9721C; --bad:#C2272D;
   --scrim:rgba(10,20,30,.42);
   --display:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
   --body:"Figtree",system-ui,-apple-system,"Segoe UI",sans-serif;
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
   --bg:#0A131B; --surface:#122030; --ink:#E6EDF3; --muted:#8C9DAD; --line:#203243; --track:#1D2D3C;
-  --school:#8098F7; --sailing:#3EC4C0; --other:#F0A65A; --scrim:rgba(0,0,0,.6); color-scheme:dark}}
+  --school:#8098F7; --sailing:#3EC4C0; --other:#F0A65A; --bad:#FF7A7F; --scrim:rgba(0,0,0,.6); color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#0A131B; --surface:#122030; --ink:#E6EDF3; --muted:#8C9DAD; --line:#203243; --track:#1D2D3C;
-  --school:#8098F7; --sailing:#3EC4C0; --other:#F0A65A; --scrim:rgba(0,0,0,.6); color-scheme:dark}
+  --school:#8098F7; --sailing:#3EC4C0; --other:#F0A65A; --bad:#FF7A7F; --scrim:rgba(0,0,0,.6); color-scheme:dark}
 
 *{box-sizing:border-box}
 body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.45;-webkit-tap-highlight-color:transparent}
@@ -187,6 +187,28 @@ main{padding-block:18px 120px}
 .btn.danger{color:var(--other);border-color:transparent;background:none;padding:0 6px}
 .btn.danger.armed{background:var(--other);color:var(--surface);padding:0 14px}
 
+/* Sync */
+.syncbtn{position:relative;height:40px;min-width:40px;border-radius:10px;border:1px solid var(--line);background:var(--surface);display:flex;align-items:center;gap:6px;padding:0 12px 0 10px;cursor:pointer;font-weight:600;font-size:13px;color:var(--muted)}
+.syncbtn svg{width:20px;height:20px;flex:none}
+.syncbtn .sdot{position:absolute;top:5px;left:24px;width:10px;height:10px;border-radius:50%;background:var(--track);border:2px solid var(--surface)}
+.syncbtn[data-s="ok"] .sdot{background:var(--sailing)}
+.syncbtn[data-s="busy"] .sdot{background:var(--school)}
+.syncbtn[data-s="warn"] .sdot{background:var(--other)}
+.syncbtn[data-s="bad"] .sdot{background:var(--bad)}
+@media (max-width:759px){.syncbtn .stext{display:none}.syncbtn{padding:0 9px}.top .inner{column-gap:10px}}
+.note{margin:0;color:var(--muted)}
+.block{display:grid;gap:10px;padding:14px;border:1px solid var(--line);border-radius:14px}
+.block .lab{margin:0}
+.block label{font-size:14px;color:var(--muted)}
+.block .btn{justify-self:start}
+textarea.txt{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:16px;resize:vertical;min-height:120px}
+.mono{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:16px}
+.sstate{margin:0;padding:12px 14px;border-radius:12px;font-weight:600;border:1px solid var(--line)}
+.sstate[data-s="ok"]{color:var(--sailing);border-color:var(--sailing)}
+.sstate[data-s="warn"]{color:var(--other);border-color:var(--other)}
+.sstate[data-s="bad"]{color:var(--bad);border-color:var(--bad)}
+.sstate small{display:block;font-weight:500;color:var(--muted);margin-top:2px}
+
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -201,6 +223,7 @@ main{padding-block:18px 120px}
       <button class="iconbtn" data-action="next" aria-label="Next"><svg viewBox="0 0 20 20"><path d="m7.5 4 6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       <button class="todaybtn" data-action="today">Today</button>
     </div>
+    <button class="syncbtn" id="syncbtn" data-action="sync" data-s="off" aria-label="Sync: not set up"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18.5h10.2a4 4 0 0 0 .6-7.95A5.6 5.6 0 0 0 6.9 9.6 4.5 4.5 0 0 0 7 18.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg><span class="stext" id="synctext">Sync</span><span class="sdot"></span></button>
     <div class="seg-toggle" role="group" aria-label="View">
       <button data-action="view" data-view="day" aria-pressed="true">Day</button>
       <button data-action="view" data-view="week" aria-pressed="false">Week</button>
@@ -244,6 +267,17 @@ main{padding-block:18px 120px}
   </form>
 </div>
 
+<div class="scrim" id="sync-scrim" hidden>
+  <div class="sheet" id="sync-sheet" role="dialog" aria-modal="true" aria-labelledby="sync-title">
+    <h2 id="sync-title">Sync</h2>
+    <div id="sync-body" style="display:grid;gap:14px"></div>
+    <div class="actions"><span class="sp"></span><button type="button" class="btn" data-action="sync-close">Close</button></div>
+  </div>
+</div>
+
+<script src="firebase-app-compat.js"></script>
+<script src="firebase-auth-compat.js"></script>
+<script src="firebase-database-compat.js"></script>
 <script>
 (function(){
 const STORE = 'oncourse-v1';
@@ -499,14 +533,16 @@ form.addEventListener('submit', e => {
   t.title = title; t.cat = cat; t.time = time;
   if (repeat){ t.from = (t.weekdays && t.from) ? t.from : S.week; t.weekdays = idx; t.dates = null; }
   else { const keep = (t.dates||[]).filter(x => !weekDates.includes(x)); t.dates = keep.concat(idx.map(i => weekDates[i])); t.weekdays = null; }
+  op('tasks/'+t.id, taskDoc(t));
   save(); closeSheet(); render();
 });
 delBtn.addEventListener('click', () => {
   if (!delBtn.classList.contains('armed')){ delBtn.classList.add('armed'); delBtn.textContent = 'Tap again to delete'; return; }
+  op('tasks/'+editing, null); op('done/'+editing, null);
   S.tasks = S.tasks.filter(x => x.id!==editing); save(); closeSheet(); render();
 });
 scrim.addEventListener('click', e => { if (e.target===scrim) closeSheet(); });
-document.addEventListener('keydown', e => { if (e.key==='Escape' && !scrim.hidden) closeSheet(); });
+document.addEventListener('keydown', e => { if (e.key!=='Escape') return; if (!scrim.hidden) closeSheet(); if (!syncScrim.hidden) syncScrim.hidden = true; });
 
 /* ---------- Actions ---------- */
 function celebrate(){ const c = document.getElementById('pcard'); if (c){ c.classList.remove('pop'); void c.offsetWidth; c.classList.add('pop'); } }
@@ -518,6 +554,7 @@ document.addEventListener('click', e => {
     const scope = S.view==='day' ? [ds] : DSHORT.map((_,i) => iso(addDays(parse(S.week),i)));
     const before = stats(scope.flatMap(pairsOn));
     if (t.done[ds]) delete t.done[ds]; else t.done[ds] = true;
+    op('done/'+t.id+'/'+ds, t.done[ds] ? true : null);
     save(); render();
     const after = stats(scope.flatMap(pairsOn));
     if (after.total && after.done===after.total && before.done!==before.total) celebrate();
@@ -534,8 +571,206 @@ document.addEventListener('click', e => {
     S.week = iso(addDays(parse(S.week), n)); S.sel = iso(addDays(parse(S.sel), n)); render();
   }
   else if (a==='today'){ S.sel = todayIso(); S.week = iso(monday(new Date())); render(); }
-  else if (a==='clear-ex'){ S.tasks = S.tasks.filter(t => !t.ex); save(); render(); }
+  else if (a==='clear-ex'){ S.tasks.filter(t => t.ex).forEach(t => { op('tasks/'+t.id, null); op('done/'+t.id, null); }); S.tasks = S.tasks.filter(t => !t.ex); save(); render(); }
+  else if (a==='sync'){ syncScrim.hidden = false; renderSync(); }
+  else if (a==='sync-close') syncScrim.hidden = true;
+  else if (a==='sync-start') syncSetupFirst();
+  else if (a==='sync-join') syncJoin(document.getElementById('join-code').value);
+  else if (a==='copy-link') copyLink(b);
+  else if (a==='sync-disconnect') syncDisconnect(b);
 });
+
+/* ---------- Sync (round 1, version 0.2) ----------
+   Firebase Realtime Database, path oncourse/<list key>/ with
+     tasks/<id> = {title, cat, time, weekdays + from | dates, ex}
+     done/<id>/<YYYY-MM-DD> = true
+   Every change is applied on this device at once, saved in a queue in localStorage,
+   and sent to Firebase; it leaves the queue only when Firebase confirms it. So a change
+   made offline survives closing the app and is sent on the next start with a connection.
+   The list key is a random 24-character code; whoever has the link code can read and
+   write the list, so it is treated like a house key. */
+const syncScrim = document.getElementById('sync-scrim');
+syncScrim.addEventListener('click', e => { if (e.target===syncScrim) syncScrim.hidden = true; });
+const LSK = k => 'oncourse-'+k;
+function lsGet(k){ try { const v = localStorage.getItem(LSK(k)); return v ? JSON.parse(v) : null; } catch(e){ return null; } }
+function lsSet(k,v){ try { if (v===null) localStorage.removeItem(LSK(k)); else localStorage.setItem(LSK(k), JSON.stringify(v)); } catch(e){} }
+const SY = { cfg: lsGet('cfg'), key: lsGet('key'), ref: null, connected: false, err: '', inited: false,
+  pending: (lsGet('pending')||[]).map(o => ({p:o.p, v:o.v, id:o.id})) };
+const CAT_KEYS = CATS.map(c => c[0]);
+
+function taskDoc(t){
+  const d = {title: t.title, cat: t.cat, time: t.time||''};
+  if (t.weekdays){ d.weekdays = t.weekdays; d.from = t.from; } else d.dates = t.dates||[];
+  if (t.ex) d.ex = true;
+  return d;
+}
+function savePending(){ lsSet('pending', SY.pending.map(o => ({p:o.p, v:o.v, id:o.id}))); }
+function op(p, v){
+  if (!SY.key) return;
+  const o = {p, v: v===undefined ? null : v, id: Date.now().toString(36)+Math.random().toString(36).slice(2,7)};
+  SY.pending.push(o); savePending(); send(o); renderSync();
+}
+function send(o){
+  if (!SY.ref || o.sending) return;
+  o.sending = true;
+  SY.ref.child(o.p).set(o.v).then(() => {
+    SY.pending = SY.pending.filter(x => x.id!==o.id); savePending(); renderSync();
+  }, e => { o.sending = false; dbError(e); });
+}
+function applyOp(list, o){
+  const a = o.p.split('/');
+  if (a[0]==='tasks'){
+    const i = list.findIndex(t => t.id===a[1]);
+    if (o.v===null){ if (i>=0) list.splice(i,1); return; }
+    const t = fromDoc(a[1], o.v, i>=0 ? list[i].done : {});
+    if (i>=0) list[i] = t; else list.push(t);
+  } else if (a[0]==='done'){
+    const t = list.find(x => x.id===a[1]); if (!t) return;
+    if (a.length===2){ if (o.v===null) t.done = {}; return; }
+    if (o.v) t.done[a[2]] = true; else delete t.done[a[2]];
+  }
+}
+function fromDoc(id, d, done){
+  const wd = d.weekdays ? Object.values(d.weekdays).map(Number) : null;
+  return {id, title: String(d.title||''), cat: CAT_KEYS.includes(d.cat) ? d.cat : 'other', time: d.time||'',
+    weekdays: wd, from: wd ? (d.from||S.week) : undefined, dates: wd ? null : (d.dates ? Object.values(d.dates) : []),
+    ex: !!d.ex, done: Object.assign({}, done||{})};
+}
+function onRemote(val){
+  val = val || {};
+  const tasks = val.tasks || {}, done = val.done || {};
+  const list = Object.keys(tasks).map(id => fromDoc(id, tasks[id], done[id]));
+  SY.pending.forEach(o => applyOp(list, o));   // changes not yet confirmed stay visible
+  S.tasks = list; save(); render(); renderSync();
+}
+function dbError(e){
+  SY.err = 'The database refused access (' + (e && e.code ? e.code : 'error') + '). Check the database rules in Firebase.';
+  renderSync();
+}
+
+function b64e(s){ return btoa(unescape(encodeURIComponent(s))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+function b64d(s){ s = s.replace(/-/g,'+').replace(/_/g,'/'); while (s.length%4) s += '='; return decodeURIComponent(escape(atob(s))); }
+function joinCode(){ return b64e(JSON.stringify({c: SY.cfg, k: SY.key})); }
+function joinLink(){ return location.origin + location.pathname + '?j=' + joinCode(); }
+function decodeJoin(s){
+  try {
+    s = String(s||'').trim(); const m = s.match(/[?&]j=([A-Za-z0-9_-]+)/); if (m) s = m[1];
+    const d = JSON.parse(b64d(s));
+    if (d && typeof d.k==='string' && d.k.length>=20 && d.c && d.c.apiKey && d.c.databaseURL) return d;
+  } catch(e){}
+  return null;
+}
+function parseConfig(text){
+  const out = {};
+  ['apiKey','authDomain','databaseURL','projectId','appId'].forEach(k => {
+    const m = text.match(new RegExp('["\']?' + k + '["\']?\\s*:\\s*["\']([^"\']+)["\']')); if (m) out[k] = m[1];
+  });
+  return out;
+}
+function randomKey(){
+  const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789', a = new Uint32Array(24);
+  crypto.getRandomValues(a); return Array.from(a, n => abc[n % abc.length]).join('');
+}
+// Keeps the link code in the address, so "Add to Home Screen" saves a link that rebuilds this device's setup.
+function keepJoinInUrl(){ try { history.replaceState(null, '', location.pathname + '?j=' + joinCode()); } catch(e){} }
+
+function syncErr(msg){ const e = document.getElementById('sync-err'); if (e){ e.textContent = msg; e.hidden = false; } }
+function syncSetupFirst(){
+  const c = parseConfig(document.getElementById('cfg-text').value);
+  if (!c.apiKey || !c.projectId) return syncErr('No apiKey or projectId found. Copy the whole firebaseConfig block from the Firebase console and paste it again.');
+  if (!c.databaseURL) return syncErr('The settings have no databaseURL. Create the Realtime Database first, then copy the settings again from Project settings.');
+  SY.cfg = c; SY.key = randomKey(); lsSet('cfg', c); lsSet('key', SY.key); lsSet('linked', null);
+  syncStart();
+}
+function syncJoin(text){
+  const d = decodeJoin(text);
+  if (!d) return syncErr('That code is not complete. Copy the whole link or code from the first device and paste it again.');
+  SY.cfg = d.c; SY.key = d.k; lsSet('cfg', d.c); lsSet('key', d.k); lsSet('linked', null);
+  syncStart();
+}
+function syncDisconnect(b){
+  if (!b.classList.contains('armed')){ b.classList.add('armed'); b.textContent = 'Tap again to disconnect'; return; }
+  ['cfg','key','linked','pending'].forEach(k => lsSet(k, null));
+  location.replace(location.pathname);   // tasks stay on this device; a fresh start drops the old listeners
+}
+function copyLink(b){
+  const inp = document.getElementById('join-link');
+  const done = () => { b.textContent = 'Copied'; setTimeout(() => b.textContent = 'Copy link', 1500); };
+  const sel = () => { inp.focus(); inp.select(); };
+  try { navigator.clipboard.writeText(inp.value).then(done, sel); } catch(e){ sel(); }
+}
+
+function syncStart(){
+  keepJoinInUrl();
+  if (typeof firebase==='undefined'){ SY.err = 'The sync code did not load, probably no internet. Your changes are kept on this device; close and reopen the app when you are online.'; renderSync(); return; }
+  try { if (!SY.inited){ firebase.initializeApp(SY.cfg); SY.inited = true; } }
+  catch(e){ SY.err = 'Could not start sync: ' + e.message; renderSync(); return; }
+  SY.err = ''; renderSync();
+  firebase.auth().signInAnonymously().then(attach).catch(e => {
+    SY.err = 'Sign-in failed (' + (e && e.code ? e.code : 'error') + '). In Firebase, check that Anonymous sign-in is switched on.'; renderSync();
+  });
+}
+function attach(){
+  const db = firebase.database(), ref = db.ref('oncourse/' + SY.key);
+  db.ref('.info/connected').on('value', s => { SY.connected = !!s.val(); renderSync(); });
+  ref.once('value').then(s => {
+    const remote = s.val();
+    if (!lsGet('linked')){
+      // First connection of this device: an empty online list gets everything from here (examples too);
+      // a list that already exists only gets this device's own tasks, not its examples.
+      const up = remote ? S.tasks.filter(t => !t.ex) : S.tasks;
+      up.forEach(t => {
+        SY.pending.push({p: 'tasks/'+t.id, v: taskDoc(t), id: 'u'+t.id});
+        Object.keys(t.done).forEach(ds => SY.pending.push({p: 'done/'+t.id+'/'+ds, v: true, id: 'u'+t.id+ds}));
+      });
+      savePending(); lsSet('linked', true);
+    }
+    SY.ref = ref; SY.pending.forEach(send);
+    ref.on('value', s2 => onRemote(s2.val()), dbError);
+  }, dbError);
+}
+
+function syncState(){
+  if (!SY.key) return ['off', 'Not synced', 'This list is only on this device.'];
+  if (SY.err) return ['bad', 'Sync problem', SY.err];
+  const n = SY.pending.length, w = n===1 ? '1 change' : n + ' changes';
+  if (!SY.ref) return ['busy', 'Connecting', n ? w + ' waiting to be sent.' : 'Opening the online list.'];
+  if (!SY.connected) return ['warn', 'Offline', n ? w + ' will be sent when the connection is back.' : 'Nothing waiting. Changes made now are kept and sent later.'];
+  if (n) return ['busy', 'Saving', w + ' being sent.'];
+  return ['ok', 'Synced', 'Everything is saved online and shared with your other device.'];
+}
+function renderSync(){
+  const [s, label, detail] = syncState();
+  const btn = document.getElementById('syncbtn');
+  btn.dataset.s = s; btn.setAttribute('aria-label', 'Sync: ' + label); document.getElementById('synctext').textContent = label;
+  if (syncScrim.hidden) return;
+  const body = document.getElementById('sync-body');
+  if (!SY.key){
+    body.innerHTML = `<p class="note">Sync keeps the list safe online and the same on the iPhone and the iPad. Set it up once on the first device, then link the second one.</p>
+      <div class="block"><p class="lab">First device</p>
+        <label for="cfg-text">Paste the Firebase settings (the firebaseConfig block)</label>
+        <textarea id="cfg-text" class="txt" rows="5" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="const firebaseConfig = { apiKey: ... }"></textarea>
+        <button type="button" class="btn primary" data-action="sync-start">Start syncing</button></div>
+      <div class="block"><p class="lab">Second device</p>
+        <label for="join-code">Paste the link or code from the first device</label>
+        <input id="join-code" class="txt mono" type="text" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <button type="button" class="btn" data-action="sync-join">Join</button></div>
+      <p class="err" id="sync-err" hidden></p>`;
+    return;
+  }
+  body.innerHTML = `<p class="sstate" data-s="${s}">${esc(label)}<small>${esc(detail)}</small></p>
+    <div class="block"><p class="lab">Link another device</p>
+      <label for="join-link">Open this link on the other device in Safari, then add it to the home screen. Anyone with this link can see and change the list.</label>
+      <input id="join-link" class="txt mono" type="text" readonly value="${esc(joinLink())}">
+      <button type="button" class="btn" data-action="copy-link">Copy link</button></div>
+    <div><button type="button" class="btn danger" data-action="sync-disconnect">Disconnect this device</button></div>`;
+}
+
+(function syncBoot(){
+  const j = new URLSearchParams(location.search).get('j');
+  if (j && !SY.key){ const d = decodeJoin(j); if (d){ SY.cfg = d.c; SY.key = d.k; lsSet('cfg', d.c); lsSet('key', d.k); } }
+  if (SY.key) syncStart(); else renderSync();
+})();
 
 render();
 })();
