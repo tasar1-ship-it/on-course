@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- On Course, version 0.3 (8 November 2026): round 2, home-screen app (manifest, icons, offline service worker). Service worker: on-course-v1. -->
+<!-- On Course, version 0.4 (8 November 2026): voice dictation for new tasks. Service worker: on-course-v2. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-version" content="0.3">
+<meta name="app-version" content="0.4">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}[hidden]{display:none!important}</style>
 <title>On Course</title>
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -219,6 +219,15 @@ textarea.txt{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:16px;r
 .sstate[data-s="bad"]{color:var(--bad);border-color:var(--bad)}
 .sstate small{display:block;font-weight:500;color:var(--muted);margin-top:2px}
 
+/* Voice dictation (version 0.4) */
+.titlerow{display:flex;gap:8px}
+.titlerow .txt{flex:1;min-width:0}
+.micbtn{width:52px;flex:none;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--ink);display:grid;place-items:center;cursor:pointer}
+.micbtn svg{width:24px;height:24px}
+.micbtn.on{background:var(--bad);border-color:var(--bad);color:#fff;animation:mic 1.2s ease-in-out infinite}
+@keyframes mic{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--bad) 45%,transparent)}50%{box-shadow:0 0 0 8px transparent}}
+.mic-hint{margin:8px 0 0;font-size:14px;color:var(--muted)}
+
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -250,7 +259,11 @@ textarea.txt{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:16px;r
     <h2 id="sheet-title">New task</h2>
     <div>
       <label class="lab" for="task-title" style="display:block">What needs doing?</label>
-      <input class="txt" id="task-title" type="text" maxlength="90" autocomplete="off" placeholder="e.g. Finish maths worksheet">
+      <div class="titlerow">
+        <input class="txt" id="task-title" type="text" maxlength="90" autocomplete="off" placeholder="Type it, or tap the mic and say it">
+        <button type="button" class="micbtn" id="mic-btn" aria-label="Say the task" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg></button>
+      </div>
+      <p class="mic-hint" id="mic-hint" role="status" hidden></p>
     </div>
     <fieldset>
       <legend>Area</legend>
@@ -533,12 +546,44 @@ function openSheet(id){
     const on = t ? occurs(t,x) || (t.weekdays && t.weekdays.includes(i)) : (S.view==='day' ? x===S.sel : x===todayIso());
     return `<label class="opt"><input type="checkbox" name="day" id="day-${i}" value="${i}"${on?' checked':''}><span>${n}<small>${addDays(W,i).getDate()}</small></span></label>`; }).join('');
   updateDaysLegend();
-  errEl.hidden = true;
+  errEl.hidden = true; micSay('');
   delBtn.hidden = !t; delBtn.classList.remove('armed'); delBtn.textContent = 'Delete';
   scrim.hidden = false;
   if (!t) setTimeout(() => document.getElementById('task-title').focus(), 60);
 }
-function closeSheet(){ scrim.hidden = true; editing = null; }
+function closeSheet(){ stopMic(); scrim.hidden = true; editing = null; }
+
+/* ---------- Voice dictation (version 0.4) ----------
+   Uses the browser's speech recognition where it exists. Where it does not (or it fails),
+   the button opens the keyboard and points to its microphone key, which works on every iPhone and iPad. */
+const micBtn = document.getElementById('mic-btn'), micHint = document.getElementById('mic-hint'), titleInp = document.getElementById('task-title');
+let rec = null;
+function micSay(t){ micHint.textContent = t; micHint.hidden = !t; }
+function micKeyboard(){ titleInp.focus(); micSay('Tap the microphone key on the keyboard and say the task.'); }
+function stopMic(){ if (rec){ try { rec.stop(); } catch(e){} } }
+micBtn.addEventListener('click', () => {
+  if (rec){ stopMic(); return; }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return micKeyboard();
+  const before = titleInp.value.trim();
+  try {
+    rec = new SR();
+    rec.lang = navigator.language || 'en-GB'; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
+    rec.onresult = e => {
+      let t = ''; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+      t = t.trim(); if (!t) return;
+      if (!before) t = t.charAt(0).toUpperCase() + t.slice(1);
+      titleInp.value = (before ? before + ' ' : '') + t;
+    };
+    rec.onerror = e => { rec = null; micBtn.classList.remove('on'); micBtn.setAttribute('aria-pressed','false');
+      if (e && e.error === 'not-allowed') micSay('The microphone is not allowed here. Use the microphone key on the keyboard instead.');
+      else if (e && e.error === 'no-speech') micSay('Didn\u2019t hear anything. Tap the mic and try again.');
+      else micKeyboard(); };
+    rec.onend = () => { rec = null; micBtn.classList.remove('on'); micBtn.setAttribute('aria-pressed','false'); if (micHint.textContent.indexOf('Listening') === 0) micSay(''); };
+    rec.start();
+    micBtn.classList.add('on'); micBtn.setAttribute('aria-pressed','true'); micSay('Listening\u2026 say the task.');
+  } catch(e){ rec = null; micKeyboard(); }
+});
 function updateDaysLegend(){ document.getElementById('days-legend').textContent = document.getElementById('task-repeat').checked ? 'Repeat on' : 'Day (this week)'; }
 document.getElementById('task-repeat').addEventListener('change', updateDaysLegend);
 

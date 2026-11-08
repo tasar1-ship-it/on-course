@@ -38,7 +38,7 @@ var TYPES = { html: 'text/html; charset=utf-8', js: 'application/javascript', js
   await pg.evaluate(function () { return navigator.serviceWorker.ready; });
   await pg.reload(); await pg.waitForSelector('.task');
   ok('offline worker controls the page', await pg.evaluate(function () { return !!navigator.serviceWorker.controller; }));
-  var cached = await pg.evaluate(async function () { var c = await caches.open('on-course-v1'); return (await c.keys()).length; });
+  var cached = await pg.evaluate(async function () { var c = await caches.open('on-course-v2'); return (await c.keys()).length; });
   ok('offline worker cached the 9 app files', cached === 9, cached);
   await ctx.setOffline(true);
   await pg.goto(BASE + '?j=someLinkCode'); await pg.waitForSelector('.task', { timeout: 5000 }).catch(function () {});
@@ -69,6 +69,28 @@ var TYPES = { html: 'text/html; charset=utf-8', js: 'application/javascript', js
   var p4 = await ctx4.newPage(); await p4.goto(BASE); await p4.waitForSelector('.empty');
   ok('old device sees the update message', /needs iOS 16\.4/.test(await p4.textContent('#main')));
   await ctx4.close();
+
+  /* 4. Voice dictation (version 0.4) */
+  var ctx5 = await browser.newContext({ viewport: { width: 375, height: 667 }, serviceWorkers: 'block' });
+  await ctx5.addInitScript('delete window.webkitSpeechRecognition; delete window.SpeechRecognition;');
+  var p5 = await ctx5.newPage(); p5.on('pageerror', function (e) { errs.push('pageerror ' + e.message); });
+  await p5.goto(BASE); await p5.waitForSelector('.task');
+  await p5.click('.fab'); await p5.click('#mic-btn');
+  ok('dictation without speech recognition: points to the keyboard microphone and focuses the field',
+    /microphone key on the keyboard/.test(await p5.textContent('#mic-hint')) && (await p5.evaluate(function () { return document.activeElement.id; })) === 'task-title');
+  await ctx5.close();
+  var ctx6 = await browser.newContext({ viewport: { width: 375, height: 667 }, serviceWorkers: 'block' });
+  await ctx6.addInitScript('window.SpeechRecognition = function () { var s = this; window.__rec = s; this.start = function () { var w = ["return", "library", "book"], i = 0; var iv = setInterval(function () { i++; s.onresult({ results: [[{ transcript: w.slice(0, i).join(" ") }]] }); if (i >= w.length) { clearInterval(iv); setTimeout(function () { s.onend(); }, 150); } }, 120); }; this.stop = function () { s.onend(); }; };');
+  var p6 = await ctx6.newPage(); p6.on('pageerror', function (e) { errs.push('pageerror ' + e.message); });
+  await p6.goto(BASE); await p6.waitForSelector('.task');
+  await p6.click('.fab'); await p6.click('#mic-btn');
+  ok('dictation: the mic shows it is listening', (await p6.getAttribute('#mic-btn', 'aria-pressed')) === 'true' && /Listening/.test(await p6.textContent('#mic-hint')));
+  await p6.waitForFunction(function () { return document.getElementById('mic-btn').getAttribute('aria-pressed') === 'false'; });
+  ok('dictation: the spoken words fill the field, first letter capitalised', (await p6.inputValue('#task-title')) === 'Return library book', await p6.inputValue('#task-title'));
+  ok('dictation: the listening note goes away afterwards', await p6.isHidden('#mic-hint'));
+  await p6.click('label.opt[data-cat="other"]'); await p6.click('#task-form button[type=submit]');
+  ok('dictation: the dictated task is saved', (await p6.$$eval('.t-title', function (a) { return a.map(function (e) { return e.textContent; }); })).indexOf('Return library book') >= 0);
+  await ctx6.close();
 
   ok('no page errors', errs.length === 0, errs.join(' | '));
   await browser.close(); server.close();
