@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- On Course, version 0.4 (8 November 2026): voice dictation for new tasks. Service worker: on-course-v2. -->
+<!-- On Course, version 0.5 (8 November 2026): Clean up moves ticked tasks into an Archive. Service worker: on-course-v3. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-version" content="0.4">
+<meta name="app-version" content="0.5">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}[hidden]{display:none!important}</style>
 <title>On Course</title>
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -219,6 +219,26 @@ textarea.txt{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:16px;r
 .sstate[data-s="bad"]{color:var(--bad);border-color:var(--bad)}
 .sstate small{display:block;font-weight:500;color:var(--muted);margin-top:2px}
 
+/* Clean up and Archive (version 0.5) */
+.tidy{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.tbtn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:10px;padding:0 12px;min-height:40px;font-weight:600;font-size:14px;cursor:pointer}
+.tbtn svg{width:18px;height:18px}
+.tbtn .n{font-variant-numeric:tabular-nums;color:var(--muted);font-weight:500}
+.tbtn:disabled{opacity:.45;cursor:default}
+.adate{font-family:var(--display);font-weight:700;font-size:17px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin:4px 0 0}
+.alist{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.alist li{--c:var(--muted);display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:12px}
+.alist li[data-cat="school"]{--c:var(--school)} .alist li[data-cat="sailing"]{--c:var(--sailing)} .alist li[data-cat="other"]{--c:var(--other)}
+.abox{width:22px;height:22px;border-radius:6px;background:var(--c);display:grid;place-items:center;flex:none}
+.abox svg{width:13px;height:13px;color:var(--surface)}
+.atitle{flex:1;min-width:0;font-weight:600;overflow-wrap:anywhere}
+.atitle small{display:block;font-weight:500;color:var(--muted);font-size:13px}
+.aback{border:0;background:none;color:var(--school);font-weight:600;font-size:14px;cursor:pointer;padding:8px 4px;flex:none}
+#archive-body{display:grid;gap:10px}
+.toast{position:fixed;z-index:30;left:max(16px,env(safe-area-inset-left,0px));right:max(16px,env(safe-area-inset-right,0px));bottom:calc(86px + env(safe-area-inset-bottom,0px));margin:0 auto;max-width:440px;background:var(--ink);color:var(--bg);border-radius:14px;padding:12px 14px 12px 16px;display:flex;align-items:center;gap:12px;box-shadow:0 8px 24px rgba(0,0,0,.25);font-weight:600;font-size:15px}
+.toast span{flex:1}
+.toast button{border:0;background:none;color:var(--bg);font:700 15px var(--body);text-decoration:underline;text-underline-offset:3px;cursor:pointer;padding:6px 2px;min-height:40px}
+
 /* Voice dictation (version 0.4) */
 .titlerow{display:flex;gap:8px}
 .titlerow .txt{flex:1;min-width:0}
@@ -289,6 +309,15 @@ textarea.txt{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:16px;r
     </div>
   </form>
 </div>
+
+<div class="scrim" id="archive-scrim" hidden>
+  <div class="sheet" id="archive-sheet" role="dialog" aria-modal="true" aria-labelledby="archive-title">
+    <h2 id="archive-title">Archive</h2>
+    <div id="archive-body"></div>
+    <div class="actions"><span class="sp"></span><button type="button" class="btn" data-action="archive-close">Close</button></div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" hidden><span id="toast-text"></span><button type="button" id="toast-btn">Undo</button></div>
 
 <div class="scrim" id="sync-scrim" hidden>
   <div class="sheet" id="sync-sheet" role="dialog" aria-modal="true" aria-labelledby="sync-title">
@@ -375,7 +404,7 @@ function seed(){
   ];
   const today = todayIso(); let k = 0;
   return T.map((t,i) => {
-    const task = Object.assign({id:'ex'+i, ex:true, time:'', weekdays:null, dates:null, from, done:{}}, t);
+    const task = Object.assign({id:'ex'+i, ex:true, time:'', weekdays:null, dates:null, from, done:{}, arch:{}}, t);
     for (let n=0;n<7;n++){ const ds = d(n); if (!occurs(task,ds)) continue; k++;
       if (ds < today && k%6!==0) task.done[ds] = true;
       else if (ds === today && k%2===0) task.done[ds] = true; }
@@ -387,12 +416,15 @@ function load(){ try { const raw = localStorage.getItem(STORE); if (raw){ const 
 const saved = load();
 const S = {
   tasks: saved ? saved.tasks : seed(),
+  archive: saved && Array.isArray(saved.archive) ? saved.archive : [],
   view: saved && saved.view==='week' ? 'week' : 'day',
   filter: saved && saved.filter ? saved.filter : 'all',
   sel: todayIso(),
   week: iso(monday(new Date()))
 };
-function save(){ try { localStorage.setItem(STORE, JSON.stringify({tasks:S.tasks, view:S.view, filter:S.filter})); } catch(e){} }
+S.tasks.forEach(t => { if (!t.arch) t.arch = {}; });
+function save(){ try { localStorage.setItem(STORE, JSON.stringify({tasks:S.tasks, archive:S.archive, view:S.view, filter:S.filter})); } catch(e){} }
+const isArch = (t, ds) => !!(t.arch && t.arch[ds]);
 
 function tasksOn(ds){
   return S.tasks.filter(t => occurs(t,ds)).sort((a,b) => {
@@ -423,6 +455,17 @@ function ring(s){
   const C = 2*Math.PI*7.5, p = s.done/s.total;
   const col = p===1 ? 'var(--sailing)' : 'var(--ink)';
   return `<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" fill="none" stroke="var(--track)" stroke-width="3"/><circle cx="10" cy="10" r="7.5" fill="none" stroke="${col}" stroke-width="3" stroke-linecap="round" stroke-dasharray="${(p*C).toFixed(2)} ${C.toFixed(2)}" transform="rotate(-90 10 10)"/></svg>`;
+}
+const ICON_TIDY = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 11.5h3.5l1.2 2h4.6l1.2-2H17M3 11.5V16h14v-4.5M3 11.5 5 4h10l2 7.5M10 5.5v4.2M7.9 7.8 10 9.9l2.1-2.1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const ICON_BOX = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 4h15v3.5h-15zM3.8 7.5V16h12.4V7.5M8 10.5h4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+function cleanable(){
+  const out = [];
+  S.tasks.forEach(t => Object.keys(t.done||{}).forEach(ds => { if (!isArch(t, ds) && occurs(t, ds)) out.push({t, ds}); }));
+  return out;
+}
+function tidyRow(){
+  const n = cleanable().length, m = S.archive.length;
+  return `<div class="tidy"><button class="tbtn" id="cleanup-btn" data-action="cleanup"${n?'':' disabled'}>${ICON_TIDY}Clean up <span class="n">${n}</span></button><button class="tbtn" id="archive-btn" data-action="archive">${ICON_BOX}Archive <span class="n">${m}</span></button></div>`;
 }
 function filterChips(pairs){
   const n = c => pairs.filter(p => c==='all' || p.t.cat===c).length;
@@ -462,9 +505,12 @@ function renderDay(){
     const next = (ds===todayIso() ? open.find(t => t.time && t.time >= now) : null) || open[0];
     msg = `<b>${left} to go.</b> Next: ${esc(next.title)}${next.time ? ', '+esc(next.time) : ''}`;
   }
-  const visible = pairs.filter(p => passFilter(p.t));
+  const shown = pairs.filter(p => !isArch(p.t, ds));
+  const visible = shown.filter(p => passFilter(p.t));
   const list = visible.length ? '<ul class="tasks">' + visible.map(p => taskRow(p.t, ds)).join('') + '</ul>'
-    : `<div class="empty"><b>${pairs.length ? 'Nothing in this area' : 'Free day'}</b>${pairs.length ? 'Try another filter.' : 'Tap Add task to plan something.'}</div>`;
+    : !pairs.length ? '<div class="empty"><b>Free day</b>Tap Add task to plan something.</div>'
+    : !shown.length ? '<div class="empty"><b>All tidied away</b>Your ticked tasks are in the Archive.</div>'
+    : '<div class="empty"><b>Nothing in this area</b>Try another filter.</div>';
   return `<div class="day-layout">
     <aside class="side">
       <div class="strip" role="group" aria-label="Pick a day">${strip}</div>
@@ -480,7 +526,8 @@ function renderDay(){
     </aside>
     <section class="list-col">
       ${banner()}
-      ${filterChips(pairs)}
+      ${filterChips(pairs.filter(p => !isArch(p.t, ds)))}
+      ${tidyRow()}
       ${list}
     </section>
   </div>`;
@@ -493,12 +540,12 @@ function renderWeek(){
   const s = stats(all), left = s.total - s.done;
   const cards = days.map((ds,i) => {
     const pairs = pairsOn(ds), ss = stats(pairs), dd = parse(ds);
-    const vis = pairs.filter(p => passFilter(p.t));
+    const vis = pairs.filter(p => passFilter(p.t) && !isArch(p.t, ds));
     const full = ss.total && ss.done===ss.total;
     return `<article class="card dcard${ds===todayIso()?' is-today':''}${full?' full':''}">
       <button class="dcard-head" data-action="open-day" data-date="${ds}" aria-label="Open ${DLONG[i]}"><span class="dn">${DSHORT[i]}</span><span class="dd">${dd.getDate()} ${MON[dd.getMonth()]}${ds===todayIso()?' · Today':''}</span><span class="df">${ss.done}/${ss.total}</span></button>
       ${bar(ss, DLONG[i]+' progress')}
-      ${vis.length ? '<ul class="tasks compact">' + vis.map(p => taskRow(p.t, ds)).join('') + '</ul>' : `<p class="free">${pairs.length ? 'Nothing in this area' : 'Free'}</p>`}
+      ${vis.length ? '<ul class="tasks compact">' + vis.map(p => taskRow(p.t, ds)).join('') + '</ul>' : `<p class="free">${!pairs.length ? 'Free' : pairs.every(p => isArch(p.t, ds)) ? 'All tidied away' : 'Nothing in this area'}</p>`}
     </article>`;
   }).join('');
   return `<div class="list-col">
@@ -513,7 +560,8 @@ function renderWeek(){
       ${catRows(s)}
     </section>
     ${banner()}
-    ${filterChips(all)}
+    ${filterChips(all.filter(p => !isArch(p.t, p.ds)))}
+    ${tidyRow()}
     <div class="week-grid">${cards}</div>
   </div>`;
 }
@@ -598,7 +646,7 @@ form.addEventListener('submit', e => {
   if (!idx.length){ errEl.textContent = 'Pick at least one day.'; errEl.hidden = false; return; }
   const W = parse(S.week), weekDates = DSHORT.map((_,i) => iso(addDays(W,i)));
   let t = editing ? S.tasks.find(x => x.id===editing) : null;
-  if (!t){ t = {id:'t'+Date.now().toString(36)+Math.random().toString(36).slice(2,6), done:{}}; S.tasks.push(t); }
+  if (!t){ t = {id:'t'+Date.now().toString(36)+Math.random().toString(36).slice(2,6), done:{}, arch:{}}; S.tasks.push(t); }
   t.title = title; t.cat = cat; t.time = time;
   if (repeat){ t.from = (t.weekdays && t.from) ? t.from : S.week; t.weekdays = idx; t.dates = null; }
   else { const keep = (t.dates||[]).filter(x => !weekDates.includes(x)); t.dates = keep.concat(idx.map(i => weekDates[i])); t.weekdays = null; }
@@ -607,11 +655,61 @@ form.addEventListener('submit', e => {
 });
 delBtn.addEventListener('click', () => {
   if (!delBtn.classList.contains('armed')){ delBtn.classList.add('armed'); delBtn.textContent = 'Tap again to delete'; return; }
-  op('tasks/'+editing, null); op('done/'+editing, null);
+  op('tasks/'+editing, null); op('done/'+editing, null); op('arch/'+editing, null);   // its Archive entries stay
   S.tasks = S.tasks.filter(x => x.id!==editing); save(); closeSheet(); render();
 });
 scrim.addEventListener('click', e => { if (e.target===scrim) closeSheet(); });
-document.addEventListener('keydown', e => { if (e.key!=='Escape') return; if (!scrim.hidden) closeSheet(); if (!syncScrim.hidden) syncScrim.hidden = true; });
+document.addEventListener('keydown', e => { if (e.key!=='Escape') return; if (!scrim.hidden) closeSheet(); if (!syncScrim.hidden) syncScrim.hidden = true; if (!archScrim.hidden) archScrim.hidden = true; });
+
+/* ---------- Clean up and Archive (version 0.5) ----------
+   Clean up tidies every ticked task away (each day of a repeating task separately). Tidied tasks
+   still count in the progress bars; they are only hidden from the lists. Each Archive entry keeps
+   its own copy of the title, area and date, so the history stays even if the task is deleted later. */
+const archScrim = document.getElementById('archive-scrim');
+archScrim.addEventListener('click', e => { if (e.target===archScrim) archScrim.hidden = true; });
+const archDoc = e => { const d = {task: e.task, title: e.title, cat: e.cat, date: e.date, at: e.at}; if (e.ex) d.ex = true; return d; };
+let toastTimer = null;
+function toast(text, label, fn){
+  const el = document.getElementById('toast'), btn = document.getElementById('toast-btn');
+  document.getElementById('toast-text').textContent = text;
+  btn.textContent = label; btn.onclick = () => { el.hidden = true; fn(); };
+  el.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; }, 7000);
+}
+function cleanUp(){
+  const items = cleanable(); if (!items.length) return;
+  const at = Date.now(), added = [];
+  items.forEach(({t, ds}, i) => {
+    t.arch[ds] = true; op('arch/'+t.id+'/'+ds, true);
+    const e = {id: 'a' + at.toString(36) + i.toString(36) + Math.random().toString(36).slice(2,5), task: t.id, title: t.title, cat: t.cat, date: ds, at};
+    if (t.ex) e.ex = true;
+    S.archive.push(e); op('archive/'+e.id, archDoc(e)); added.push(e);
+  });
+  save(); render();
+  toast(added.length + (added.length===1 ? ' task' : ' tasks') + ' moved to the Archive.', 'Undo', () => putBack(added));
+}
+function putBack(entries){
+  entries.forEach(e => {
+    const t = S.tasks.find(x => x.id===e.task);
+    if (t && t.arch && t.arch[e.date]){ delete t.arch[e.date]; op('arch/'+t.id+'/'+e.date, null); }
+    S.archive = S.archive.filter(x => x.id!==e.id); op('archive/'+e.id, null);
+  });
+  save(); render(); renderArchive();
+}
+function longDate(ds){ const d = parse(ds); return DLONG[dow(d)] + ' ' + d.getDate() + ' ' + MONL[d.getMonth()]; }
+function renderArchive(){
+  if (archScrim.hidden) return;
+  const body = document.getElementById('archive-body'), n = S.archive.length;
+  if (!n){ body.innerHTML = '<p class="note">Nothing here yet. Tick tasks when they are done, then tap <b>Clean up</b>.</p>'; return; }
+  const byDate = {};
+  S.archive.forEach(e => { (byDate[e.date] = byDate[e.date] || []).push(e); });
+  const dates = Object.keys(byDate).sort().reverse();
+  body.innerHTML = `<p class="note">${n} ${n===1 ? 'task' : 'tasks'} done and tidied away.</p>` + dates.map(ds =>
+    `<h3 class="adate">${longDate(ds)}</h3><ul class="alist">` + byDate[ds].map(e => {
+      const can = S.tasks.some(t => t.id===e.task);
+      const area = (CATS.find(c => c[0]===e.cat) || CATS[2])[1];
+      return `<li data-cat="${esc(e.cat)}"><span class="abox">${CHECK}</span><span class="atitle">${esc(e.title)}<small>${area}</small></span>${can ? `<button class="aback" data-action="arch-back" data-id="${esc(e.id)}">Put back</button>` : ''}</li>`;
+    }).join('') + '</ul>').join('');
+}
 
 /* ---------- Actions ---------- */
 function celebrate(){ const c = document.getElementById('pcard'); if (c){ c.classList.remove('pop'); void c.offsetWidth; c.classList.add('pop'); } }
@@ -640,7 +738,15 @@ document.addEventListener('click', e => {
     S.week = iso(addDays(parse(S.week), n)); S.sel = iso(addDays(parse(S.sel), n)); render();
   }
   else if (a==='today'){ S.sel = todayIso(); S.week = iso(monday(new Date())); render(); }
-  else if (a==='clear-ex'){ S.tasks.filter(t => t.ex).forEach(t => { op('tasks/'+t.id, null); op('done/'+t.id, null); }); S.tasks = S.tasks.filter(t => !t.ex); save(); render(); }
+  else if (a==='clear-ex'){
+    S.tasks.filter(t => t.ex).forEach(t => { op('tasks/'+t.id, null); op('done/'+t.id, null); op('arch/'+t.id, null); });
+    S.archive.filter(e => e.ex).forEach(e => op('archive/'+e.id, null));
+    S.tasks = S.tasks.filter(t => !t.ex); S.archive = S.archive.filter(e => !e.ex); save(); render();
+  }
+  else if (a==='cleanup') cleanUp();
+  else if (a==='archive'){ archScrim.hidden = false; renderArchive(); }
+  else if (a==='archive-close') archScrim.hidden = true;
+  else if (a==='arch-back'){ const e = S.archive.find(x => x.id===b.dataset.id); if (e) putBack([e]); }
   else if (a==='sync'){ syncScrim.hidden = false; renderSync(); }
   else if (a==='sync-close') syncScrim.hidden = true;
   else if (a==='sync-start') syncSetupFirst();
@@ -653,6 +759,8 @@ document.addEventListener('click', e => {
    Firebase Realtime Database, path oncourse/<list key>/ with
      tasks/<id> = {title, cat, time, weekdays + from | dates, ex}
      done/<id>/<YYYY-MM-DD> = true
+     arch/<id>/<YYYY-MM-DD> = true            (tidied away by Clean up, version 0.5)
+     archive/<entry id> = {task, title, cat, date, at, ex}
    Every change is applied on this device at once, saved in a queue in localStorage,
    and sent to Firebase; it leaves the queue only when Firebase confirms it. So a change
    made offline survives closing the app and is sent on the next start with a connection.
@@ -686,31 +794,36 @@ function send(o){
     SY.pending = SY.pending.filter(x => x.id!==o.id); savePending(); renderSync();
   }, e => { o.sending = false; dbError(e); });
 }
-function applyOp(list, o){
-  const a = o.p.split('/');
+function applyOp(st, o){
+  const a = o.p.split('/'), list = st.tasks;
   if (a[0]==='tasks'){
     const i = list.findIndex(t => t.id===a[1]);
     if (o.v===null){ if (i>=0) list.splice(i,1); return; }
-    const t = fromDoc(a[1], o.v, i>=0 ? list[i].done : {});
+    const t = fromDoc(a[1], o.v, i>=0 ? list[i].done : {}, i>=0 ? list[i].arch : {});
     if (i>=0) list[i] = t; else list.push(t);
-  } else if (a[0]==='done'){
+  } else if (a[0]==='done' || a[0]==='arch'){
     const t = list.find(x => x.id===a[1]); if (!t) return;
-    if (a.length===2){ if (o.v===null) t.done = {}; return; }
-    if (o.v) t.done[a[2]] = true; else delete t.done[a[2]];
+    const m = a[0]==='done' ? 'done' : 'arch';
+    if (a.length===2){ if (o.v===null) t[m] = {}; return; }
+    if (o.v) t[m][a[2]] = true; else delete t[m][a[2]];
+  } else if (a[0]==='archive'){
+    st.archive = st.archive.filter(e => e.id!==a[1]);
+    if (o.v!==null) st.archive.push(Object.assign({id: a[1]}, o.v));
   }
 }
-function fromDoc(id, d, done){
+function fromDoc(id, d, done, arch){
   const wd = d.weekdays ? Object.values(d.weekdays).map(Number) : null;
   return {id, title: String(d.title||''), cat: CAT_KEYS.includes(d.cat) ? d.cat : 'other', time: d.time||'',
     weekdays: wd, from: wd ? (d.from||S.week) : undefined, dates: wd ? null : (d.dates ? Object.values(d.dates) : []),
-    ex: !!d.ex, done: Object.assign({}, done||{})};
+    ex: !!d.ex, done: Object.assign({}, done||{}), arch: Object.assign({}, arch||{})};
 }
 function onRemote(val){
   val = val || {};
-  const tasks = val.tasks || {}, done = val.done || {};
-  const list = Object.keys(tasks).map(id => fromDoc(id, tasks[id], done[id]));
-  SY.pending.forEach(o => applyOp(list, o));   // changes not yet confirmed stay visible
-  S.tasks = list; save(); render(); renderSync();
+  const tasks = val.tasks || {}, done = val.done || {}, arch = val.arch || {}, archive = val.archive || {};
+  const st = {tasks: Object.keys(tasks).map(id => fromDoc(id, tasks[id], done[id], arch[id])),
+    archive: Object.keys(archive).map(id => Object.assign({id}, archive[id]))};
+  SY.pending.forEach(o => applyOp(st, o));   // changes not yet confirmed stay visible
+  S.tasks = st.tasks; S.archive = st.archive; save(); render(); renderSync(); renderArchive();
 }
 function dbError(e){
   SY.err = 'The database refused access (' + (e && e.code ? e.code : 'error') + '). Check the database rules in Firebase.';
@@ -791,7 +904,9 @@ function attach(){
       up.forEach(t => {
         SY.pending.push({p: 'tasks/'+t.id, v: taskDoc(t), id: 'u'+t.id});
         Object.keys(t.done).forEach(ds => SY.pending.push({p: 'done/'+t.id+'/'+ds, v: true, id: 'u'+t.id+ds}));
+        Object.keys(t.arch||{}).forEach(ds => SY.pending.push({p: 'arch/'+t.id+'/'+ds, v: true, id: 'v'+t.id+ds}));
       });
+      (remote ? S.archive.filter(e => !e.ex) : S.archive).forEach(e => SY.pending.push({p: 'archive/'+e.id, v: archDoc(e), id: 'w'+e.id}));
       savePending(); lsSet('linked', true);
     }
     SY.ref = ref; SY.pending.forEach(send);

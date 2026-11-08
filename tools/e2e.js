@@ -113,6 +113,28 @@ async function until(fn, ms) { var t = Date.now(); while (Date.now() - t < (ms |
   ok('a task deleted on the iPad disappears on the iPhone', await until(async function () { return (await titles(A)).indexOf('Return library book') < 0; }));
   await B.screenshot({ path: path.join(SHOTS, '2-ipad-synced.png') });
 
+  /* 5b. Clean up and Archive (version 0.5) */
+  var bigBefore = await A.textContent('#pcard .big');
+  var doneA = await doneTitles(A);
+  await A.click('#cleanup-btn');
+  ok('clean up: ticked tasks leave the iPhone list', doneA.length > 0 && (await A.$$('.list-col .task.is-done')).length === 0, doneA.length);
+  ok('clean up: the progress number stays the same', (await A.textContent('#pcard .big')) === bigBefore, bigBefore);
+  ok('clean up: the toast offers Undo', await A.isVisible('#toast') && /moved to the Archive/.test(await A.textContent('#toast-text')));
+  var nArch = Object.keys(remote(key).archive || {}).length;
+  ok('clean up: archive entries are saved online, at least one per ticked task today', nArch >= doneA.length, nArch);
+  ok('clean up: the iPad list hides them too', await until(async function () { return (await B.$$('.list-col .task.is-done')).length === 0; }));
+  await B.click('#archive-btn'); await B.waitForSelector('#archive-body .alist li');
+  ok('archive: the iPad shows every tidied task', (await B.$$('#archive-body .alist li')).length === nArch, nArch);
+  await B.screenshot({ path: path.join(SHOTS, '5-ipad-archive.png') });
+  var backTitle = await B.$eval('#archive-body .alist li .atitle', function (e) { return e.firstChild.textContent; });
+  await B.click('#archive-body .aback'); await B.click('[data-action="archive-close"]');
+  ok('put back on the iPad returns the task to the iPhone list, still ticked', await until(async function () { return (await doneTitles(A)).indexOf(backTitle) >= 0; }), backTitle);
+  ok('put back removes it from the archive online', Object.keys(remote(key).archive || {}).length === nArch - 1);
+  var nRows = (await A.$$('.list-col .task')).length;
+  await A.click('#cleanup-btn'); await A.click('#toast-btn');
+  ok('undo puts the tidied task straight back', (await A.$$('.list-col .task')).length === nRows && Object.keys(remote(key).archive || {}).length === nArch - 1);
+  await A.screenshot({ path: path.join(SHOTS, '6-iphone-after-undo.png') });
+
   /* 6. Offline on the iPhone: tick, close and reopen the app, come back online */
   await goOffline('uA', A);
   var second = await A.$eval('.list-col .task:not(.is-done) .t-title', function (e) { return e.textContent; });
@@ -137,6 +159,7 @@ async function until(fn, ms) { var t = Date.now(); while (Date.now() - t < (ms |
   ok('pasting the code joins the same list', await until(async function () { return (await state(C)) === 'ok' && JSON.stringify(await doneTitles(C)) === JSON.stringify(await doneTitles(A)); }));
   await B.click('[data-action="clear-ex"]');
   ok('clearing examples on the iPad empties the list everywhere', await until(async function () { return Object.keys(remote(key).tasks || {}).length === 0 && (await A.$$('.list-col .task')).length === 0; }));
+  ok('clearing examples also empties their archive entries', Object.keys(remote(key).archive || {}).length === 0 && Object.keys(remote(key).arch || {}).length === 0);
 
   /* 8. The rules */
   var probe = function (pg, kind, p, v) { return pg.evaluate(function (a) { var r = window.firebase.database().ref(a.p); var pr = a.kind === 'get' ? r.once('value') : r.set(a.v); return pr.then(function () { return 'ALLOWED'; }, function (e) { return e.code; }); }, { kind: kind, p: p, v: v }); };
@@ -144,6 +167,9 @@ async function until(fn, ms) { var t = Date.now(); while (Date.now() - t < (ms |
   ok('rules: a short key is refused', (await probe(A, 'set', 'oncourse/short/tasks/x', { title: 'x', cat: 'school' })) === 'PERMISSION_DENIED');
   ok('rules: a task without a title is refused', (await probe(A, 'set', 'oncourse/' + key + '/tasks/x', { cat: 'school' })) === 'PERMISSION_DENIED');
   ok('rules: a done mark must be true on a real date', (await probe(A, 'set', 'oncourse/' + key + '/done/x/yesterday', true)) === 'PERMISSION_DENIED');
+
+  ok('rules: an archive mark must be true on a real date', (await probe(A, 'set', 'oncourse/' + key + '/arch/x/2026-11-08', 'yes')) === 'PERMISSION_DENIED');
+  ok('rules: an archive entry needs a title and a real date', (await probe(A, 'set', 'oncourse/' + key + '/archive/x', { cat: 'school', date: 'soon' })) === 'PERMISSION_DENIED');
 
   ok('no page errors', errs.length === 0, errs.join(' | '));
   await browser.close(); server.close();

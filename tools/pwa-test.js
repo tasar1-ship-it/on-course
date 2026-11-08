@@ -38,7 +38,7 @@ var TYPES = { html: 'text/html; charset=utf-8', js: 'application/javascript', js
   await pg.evaluate(function () { return navigator.serviceWorker.ready; });
   await pg.reload(); await pg.waitForSelector('.task');
   ok('offline worker controls the page', await pg.evaluate(function () { return !!navigator.serviceWorker.controller; }));
-  var cached = await pg.evaluate(async function () { var c = await caches.open('on-course-v2'); return (await c.keys()).length; });
+  var cached = await pg.evaluate(async function () { var c = await caches.open('on-course-v3'); return (await c.keys()).length; });
   ok('offline worker cached the 9 app files', cached === 9, cached);
   await ctx.setOffline(true);
   await pg.goto(BASE + '?j=someLinkCode'); await pg.waitForSelector('.task', { timeout: 5000 }).catch(function () {});

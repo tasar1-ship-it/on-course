@@ -1,7 +1,7 @@
 // On Course service worker. Bump VERSION on every deploy that changes a cached file.
 // No start_url in the manifest on purpose: Add to Home Screen keeps the ?j= link, and
 // ignoreSearch below serves index.html for it, so the app also starts offline.
-var VERSION = 'on-course-v2';
+var VERSION = 'on-course-v3';
 var SHELL = [
   './',
   'index.html',
