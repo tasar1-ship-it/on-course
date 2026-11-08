@@ -1,12 +1,20 @@
 <!doctype html>
-<!-- On Course, version 0.2 (8 November 2026): round 1, safe storage and sync between devices through Firebase. -->
+<!-- On Course, version 0.3 (8 November 2026): round 2, home-screen app (manifest, icons, offline service worker). Service worker: on-course-v1. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-version" content="0.2">
+<meta name="app-version" content="0.3">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}[hidden]{display:none!important}</style>
 <title>On Course</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="On Course">
+<meta name="theme-color" content="#EDF1F4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0A131B" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Figtree:wght@400;500;600;700&display=swap">
@@ -105,6 +113,8 @@ main{padding-block:18px 120px}
 .fchip[aria-pressed="true"] svg{color:var(--bg)}
 .fchip .n{font-variant-numeric:tabular-nums;opacity:.7;font-weight:500}
 .banner{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px;padding:10px 14px;border:1px dashed var(--line);border-radius:14px;font-size:14px;color:var(--muted)}
+#home-hint{margin-bottom:14px;border-style:solid;color:var(--ink);background:var(--surface)}
+#home-hint b{font-weight:600}
 .banner button{border:0;background:none;color:var(--school);font-weight:600;font-size:14px;cursor:pointer;padding:6px 0}
 
 .tasks{list-style:none;margin:0;padding:0;display:grid;gap:8px}
@@ -275,6 +285,20 @@ textarea.txt{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:16px;r
   </div>
 </div>
 
+<script>
+/* ES5 on purpose: this check must run on any iPhone. The app below uses modern JavaScript and needs iOS 16.4 or later,
+   which push reminders need anyway. On an older device this shows a message instead of a blank page. */
+(function () {
+  var ok = false;
+  try { ok = !!(window.CSS && CSS.supports && CSS.supports('color', 'color-mix(in srgb, red 50%, blue)')); new Function('var f = (a) => `${a}`; return f(1);'); } catch (e) { ok = false; }
+  if (ok) { return; }
+  window.ON_COURSE_TOO_OLD = true;
+  document.addEventListener('DOMContentLoaded', function () {
+    var m = document.getElementById('main');
+    if (m) { m.innerHTML = '<div class="empty"><b>This device needs an update for On Course</b>It needs iOS 16.4 or later: Settings, General, Software Update.</div>'; }
+  });
+})();
+</script>
 <script src="firebase-app-compat.js"></script>
 <script src="firebase-auth-compat.js"></script>
 <script src="firebase-database-compat.js"></script>
@@ -486,7 +510,7 @@ function render(){
   const range = W.getMonth()===E.getMonth() ? `${W.getDate()}–${E.getDate()} ${MON[E.getMonth()]}` : `${W.getDate()} ${MON[W.getMonth()]} – ${E.getDate()} ${MON[E.getMonth()]}`;
   document.getElementById('weeklabel').innerHTML = `Week ${isoWeek(W)} <span>· ${range}</span>`;
   document.querySelectorAll('[data-action="view"]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view===S.view)));
-  document.getElementById('main').innerHTML = S.view==='day' ? renderDay() : renderWeek();
+  document.getElementById('main').innerHTML = homeHint() + (S.view==='day' ? renderDay() : renderWeek());
 }
 
 /* ---------- Sheet ---------- */
@@ -734,6 +758,7 @@ function syncState(){
   if (!SY.key) return ['off', 'Not synced', 'This list is only on this device.'];
   if (SY.err) return ['bad', 'Sync problem', SY.err];
   const n = SY.pending.length, w = n===1 ? '1 change' : n + ' changes';
+  if (!SY.ref && !navigator.onLine) return ['warn', 'Offline', n ? w + ' will be sent when the connection is back.' : 'Changes made now are kept and sent later.'];
   if (!SY.ref) return ['busy', 'Connecting', n ? w + ' waiting to be sent.' : 'Opening the online list.'];
   if (!SY.connected) return ['warn', 'Offline', n ? w + ' will be sent when the connection is back.' : 'Nothing waiting. Changes made now are kept and sent later.'];
   if (n) return ['busy', 'Saving', w + ' being sent.'];
@@ -771,6 +796,20 @@ function renderSync(){
   if (j && !SY.key){ const d = decodeJoin(j); if (d){ SY.cfg = d.c; SY.key = d.k; lsSet('cfg', d.c); lsSet('key', d.k); } }
   if (SY.key) syncStart(); else renderSync();
 })();
+
+/* ---------- Home screen (round 2, version 0.3) ---------- */
+// iPhone and iPad Safari only: the app must be on the home screen for reminders and full-screen use.
+function homeHint(){
+  const inSafari = ('standalone' in navigator) && !navigator.standalone && navigator.maxTouchPoints > 0;
+  if (!inSafari || lsGet('hint-hidden')) return '';
+  return '<div class="banner" id="home-hint"><span><b>Put On Course on your home screen:</b> tap the Share button, then <b>Add to Home Screen</b>.</span><button data-action="hide-hint">Got it</button></div>';
+}
+document.addEventListener('click', e => { if (e.target.closest('[data-action="hide-hint"]')){ lsSet('hint-hidden', true); render(); } });
+window.addEventListener('online', renderSync);
+window.addEventListener('offline', renderSync);
+if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
+  window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
+}
 
 render();
 })();

@@ -47,7 +47,7 @@ async function until(fn, ms) { var t = Date.now(); while (Date.now() - t < (ms |
   var browser = await engine.launch();
   var errs = [];
   async function device(uid, viewport) {
-    var ctx = await browser.newContext({ viewport: viewport });
+    var ctx = await browser.newContext({ viewport: viewport, serviceWorkers: 'block' });   // the offline worker is tested in pwa-test.js
     await ctx.addInitScript('window.__uid = ' + JSON.stringify(uid) + ';');
     await ctx.addInitScript('Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: function (t) { window.__clip = t; return Promise.resolve(); } } });');
     await ctx.exposeFunction('__rtdb', rtdb);
